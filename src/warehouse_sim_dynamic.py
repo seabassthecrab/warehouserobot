@@ -248,64 +248,64 @@ class Robot:
 
     
     def step_control(self, dt=0.1):
-    	"""
-    	Updated controller for safe turning:
-    	- Slows down during large heading errors
-    	- Limits speed based on angular velocity (turn radius)
-	- Uses proportional controller for heading
-    	- Handles reaching waypoints
-    	"""
-    	wp = self.current_goal_point()
-    	if wp is None:
+        """
+        Updated controller for safe turning:
+        - Slows down during large heading errors
+        - Limits speed based on angular velocity (turn radius)
+    - Uses proportional controller for heading
+        - Handles reaching waypoints
+        """
+        wp = self.current_goal_point()
+        if wp is None:
             # at final goal
-       	    self.v = max(0.0, self.v - self.max_accel*dt)  # slow to stop
-       	    if abs(self.v) < 1e-2:
-            	self.v = 0.0
-            	self.done = True
+            self.v = max(0.0, self.v - self.max_accel*dt)  # slow to stop
+            if abs(self.v) < 1e-2:
+                self.v = 0.0
+                self.done = True
             self.w = 0.0
             return
 
-    	# Compute vector to waypoint
-    	dx = wp[0] - self.x
-    	dy = wp[1] - self.y
-    	dist = math.hypot(dx, dy)
-    	desired_theta = math.atan2(dy, dx)
+        # Compute vector to waypoint
+        dx = wp[0] - self.x
+        dy = wp[1] - self.y
+        dist = math.hypot(dx, dy)
+        desired_theta = math.atan2(dy, dx)
 
-    	# Heading error in [-pi, pi]
-    	heading_error = (desired_theta - self.theta + math.pi) % (2*math.pi) - math.pi
+        # Heading error in [-pi, pi]
+        heading_error = (desired_theta - self.theta + math.pi) % (2*math.pi) - math.pi
 
-    	# Speed profile: reduce speed when turning or near waypoint
-    	v_cmd = min(self.max_speed, 0.8 * dist)
+        # Speed profile: reduce speed when turning or near waypoint
+        v_cmd = min(self.max_speed, 0.8 * dist)
     
-    	# Slow down based on heading error
-    	turn_factor = max(0.1, 1 - abs(heading_error)/(math.pi/2))
-    	v_cmd *= turn_factor
+        # Slow down based on heading error
+        turn_factor = max(0.1, 1 - abs(heading_error)/(math.pi/2))
+        v_cmd *= turn_factor
 
-    	# Limit speed to maintain minimum turning radius
-    	min_turn_radius = max(self.length/2, 0.5)  # half length or minimum safety
-    	max_v_for_turn = min_turn_radius * self.max_omega
-    	if v_cmd > max_v_for_turn:
+        # Limit speed to maintain minimum turning radius
+        min_turn_radius = max(self.length/2, 0.5)  # half length or minimum safety
+        max_v_for_turn = min_turn_radius * self.max_omega
+        if v_cmd > max_v_for_turn:
             v_cmd = max_v_for_turn
 
-    	# Accelerate/decelerate toward v_cmd
-    	if self.v < v_cmd:
+        # Accelerate/decelerate toward v_cmd
+        if self.v < v_cmd:
             self.v = min(self.v + self.max_accel*dt, v_cmd)
-    	else:
+        else:
             self.v = max(self.v - self.max_accel*dt, v_cmd)
 
-    	# Angular velocity proportional controller
-    	self.w = max(-self.max_omega, min(self.max_omega, 2.5 * heading_error))
+        # Angular velocity proportional controller
+        self.w = max(-self.max_omega, min(self.max_omega, 2.5 * heading_error))
 
-    	# Integrate unicycle dynamics
-    	self.theta += self.w * dt
-    	self.x += self.v * math.cos(self.theta) * dt
-    	self.y += self.v * math.sin(self.theta) * dt
+        # Integrate unicycle dynamics
+        self.theta += self.w * dt
+        self.x += self.v * math.cos(self.theta) * dt
+        self.y += self.v * math.sin(self.theta) * dt
 
-    	# Check if reached waypoint (within 0.6 units)
-    	if dist < 0.6:
+        # Check if reached waypoint (within 0.6 units)
+        if dist < 0.6:
             self.waypoint_idx += 1
             if self.waypoint_idx >= len(self.waypoints):
-            	self.done = True
+                self.done = True
 
 
 # ------------------------ Collision detection ------------------------------

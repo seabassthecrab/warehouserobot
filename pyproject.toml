@@ -1,0 +1,71 @@
+[project]
+ name = "Warehouse_Robotics_Simulator" 
+ description = "Warehouse robotics simulator project implemented for WPI's RBE 550." 
+ version = "0.1.0"
+ authors = [
+    {name = "Liam Jennings", email = "ldjennings@wpi.edu"},
+    {name = "Sebastian Baldini", email = "sbaldini@wpi.edu"},
+    {name = "Sebastian Valle", email = "svalle@wpi.edu"},
+ ]
+ readme = {file = "README.md", content-type = "text/markdown"}
+ dependencies = [
+    "matplotlib~=3.10.6",
+    "networkx~=3.5",
+    "numpy~=2.3.3",
+    "pillow~=11.3.0",
+    "scipy~=1.16.2"
+]
+ 
+ [project.optional-dependencies]
+ test = [
+    "pytest==8.2.0",
+ ]
+ lint = [
+    "ruff==0.4.4",
+    "mypy==1.10.0",
+ ]
+ dev = [
+    "pytest==8.2.0",
+    "ruff==0.4.4",
+    "mypy==1.10.0",
+ ]
+
+ [project.scripts]
+ warehouse_sim="warehouse_sim_dynamic_test:main"
+ 
+ 
+ 
+#  [tool.setuptools]
+#  package-dir = {"" = "src"}
+#  packages = ["ion_uploader"]
+ 
+ [tool.pytest.ini_options]
+ pythonpath = ["src", "scripts"]
+ 
+ [tool.mypy]
+ warn_return_any = true
+ disallow_untyped_defs = true
+ exclude = "build/"
+ strict = true
+ ignore_missing_imports = true
+ 
+ [tool.ruff]
+ line-length = 100
+ indent-width = 4
+ 
+ [tool.ruff.format]
+ quote-style = "double"
+ indent-style = "space"
+ line-ending = "auto"
+ 
+ [tool.ruff.lint]
+ select = [
+    "F", # pyflakes
+    "E", # pycodestyle
+    "I", # isort
+    "ANN", # flake8 type annotations
+    "RUF", # ruff-specific rules
+ ]
+ 
+ [tool.ruff.lint.pydocstyle]
+ convention = "google"
