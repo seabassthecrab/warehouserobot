@@ -634,8 +634,15 @@ class DynamicMultiRobotSim:
             os.makedirs(outdir, exist_ok=True)
             orca_tag = '_orca' if self.enable_orca else ''
             gif_path = os.path.join(outdir, f'warehouse_{self.planner}_n{len(self.robots)}_s{self.seed}{orca_tag}.gif')
+            
+            # Save GIF without resizing - preserve original frame dimensions
             imgs = [Image.fromarray(f) for f in frames]
-            imgs[0].save(gif_path, save_all=True, append_images=imgs[1:], duration=int(1000*self.dt*2), loop=0)
+            
+            # Verify first frame size
+            print(f"Frame dimensions: {imgs[0].size}")
+            
+            imgs[0].save(gif_path, save_all=True, append_images=imgs[1:], 
+                        duration=int(1000*self.dt*2), loop=0, optimize=False)
             print(f'Saved GIF to {gif_path}')
         
         return frames
@@ -648,13 +655,19 @@ class DynamicMultiRobotSim:
         total_width = cols + 2 * padding
         total_height = rows + 2 * padding
         
-        fig = plt.figure(figsize=(total_width * 0.15, total_height * 0.15), dpi=100)
+        # Larger figure with higher DPI for better quality
+        fig = plt.figure(figsize=(total_width * 0.2, total_height * 0.2), dpi=80)
         ax = fig.add_subplot(111)
+        
+        # Remove all margins
+        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        
         ax.set_xlim(-padding, cols + padding)
         ax.set_ylim(-padding, rows + padding)
         ax.set_xticks([])
         ax.set_yticks([])
         ax.set_facecolor('white')
+        ax.axis('off')  # Turn off axis frame
         
         # Draw racks
         for r in range(rows):
@@ -703,18 +716,16 @@ class DynamicMultiRobotSim:
             # Start marker
             sx = robot.start_cell[0] + 0.5
             sy = robot.start_cell[1] + 0.5
-            ax.plot(sx, sy, 'o', color='blue', markersize=7, markeredgewidth=1.5, 
+            ax.plot(sx, sy, 'o', color='blue', markersize=8, markeredgewidth=2, 
                    markeredgecolor='darkblue', zorder=5)
             
             # Goal marker
             gx = robot.goal_cell[0] + 0.5
             gy = robot.goal_cell[1] + 0.5
-            ax.plot(gx, gy, 'x', color='green', markersize=9, markeredgewidth=2.5, zorder=5)
+            ax.plot(gx, gy, 'x', color='green', markersize=10, markeredgewidth=3, zorder=5)
         
-        ax.set_aspect('equal')
+        ax.set_aspect('equal', adjustable='box')
         
-        # Use tight_layout to prevent clipping
-        plt.tight_layout(pad=0)
         fig.canvas.draw()
         
         # Convert to array without any resizing
