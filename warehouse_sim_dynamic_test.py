@@ -498,23 +498,25 @@ def robot_collision(robot: Robot, other: Robot):
     return polygons_overlap(poly1, poly2)
 
 def robot_map_collision(robot: Robot, wmap: WarehouseMap, margin=0.3):
-    """Enhanced collision detection with safety margin."""
+    """Enhanced collision detection with safety margin - only checks for RACK collisions."""
     corners = rectangle_corners(robot.x, robot.y, robot.length + margin, robot.width + margin, robot.theta)
-    for (cx,cy) in corners:
+    
+    for (cx, cy) in corners:
         r = int(math.floor(cx))
         c = int(math.floor(cy))
-        if not wmap.in_bounds((r,c)): 
-            return True
-        if wmap.grid[r,c] == RACK: 
-            return True
+        
+        # Only check if we're in bounds - don't treat out-of-bounds as collision
+        # This allows robots to reach goals near the edges
+        if wmap.in_bounds((r, c)):
+            if wmap.grid[r, c] == RACK:
+                return True
     
     # Also check center point for safety
     center_r = int(math.floor(robot.x))
     center_c = int(math.floor(robot.y))
-    if not wmap.in_bounds((center_r, center_c)):
-        return True
-    if wmap.grid[center_r, center_c] == RACK:
-        return True
+    if wmap.in_bounds((center_r, center_c)):
+        if wmap.grid[center_r, center_c] == RACK:
+            return True
     
     return False
 
@@ -638,26 +640,30 @@ class DynamicMultiRobotSim:
         
         return frames
 
-    def render_frame(self, cellsize=8):
+    def render_frame(self, cellsize=10, padding=3):
+        """Render frame with proper padding to show full warehouse area."""
         rows, cols = self.wmap.rows, self.wmap.cols
-        figw = cols * cellsize / 100.0
-        figh = rows * cellsize / 100.0
         
-        fig = plt.figure(figsize=(figw, figh), dpi=100)
+        # Calculate figure size including padding
+        total_width = cols + 2 * padding
+        total_height = rows + 2 * padding
+        
+        fig = plt.figure(figsize=(total_width * 0.15, total_height * 0.15), dpi=100)
         ax = fig.add_subplot(111)
-        ax.set_xlim(0, cols)
-        ax.set_ylim(0, rows)
+        ax.set_xlim(-padding, cols + padding)
+        ax.set_ylim(-padding, rows + padding)
         ax.set_xticks([])
         ax.set_yticks([])
+        ax.set_facecolor('white')
         
         # Draw racks
         for r in range(rows):
             for c in range(cols):
                 if self.wmap.grid[r,c] == RACK:
-                    rect = patches.Rectangle((r, c), 1, 1, facecolor=(0.3,0.3,0.3), edgecolor=None)
+                    rect = patches.Rectangle((r, c), 1, 1, facecolor=(0.2,0.2,0.2), edgecolor=None)
                     ax.add_patch(rect)
         
-        # Draw robot paths (FIXED: draw full path, not just remaining waypoints)
+        # Draw robot paths
         for robot in self.robots:
             if robot.path_cells and len(robot.path_cells) > 1:
                 path_x = [p[0] + 0.5 for p in robot.path_cells]
@@ -666,7 +672,7 @@ class DynamicMultiRobotSim:
                 ax.plot(path_x, path_y, '-', color=cmap(robot.id % 10), 
                        alpha=0.3, linewidth=2, zorder=1)
         
-        # Draw waypoints lightly
+        # Draw waypoints
         for robot in self.robots:
             for wp in robot.waypoints:
                 ax.plot(wp[0], wp[1], '.', color=(0.8,0.8,1.0), markersize=2, zorder=2)
@@ -678,7 +684,6 @@ class DynamicMultiRobotSim:
             L, W = robot.length, robot.width
             angle = math.degrees(robot.theta)
             
-            # Color: gray if collided, otherwise colorful
             if robot.collided:
                 fcolor = (0.5, 0.5, 0.5)
             else:
@@ -691,35 +696,35 @@ class DynamicMultiRobotSim:
             rect.set_transform(t)
             ax.add_patch(rect)
             
-            # Heading arrow (smaller, properly scaled)
             arrow_len = min(L * 0.3, 0.4)
             ax.arrow(cx, cy, arrow_len*math.cos(robot.theta), arrow_len*math.sin(robot.theta), 
                     head_width=0.15, head_length=0.15, fc='k', ec='k', linewidth=0.8, zorder=4)
             
-            # Start marker (blue circle)
+            # Start marker
             sx = robot.start_cell[0] + 0.5
             sy = robot.start_cell[1] + 0.5
-            ax.plot(sx, sy, 'o', color='blue', markersize=6, markeredgewidth=1.5, 
+            ax.plot(sx, sy, 'o', color='blue', markersize=7, markeredgewidth=1.5, 
                    markeredgecolor='darkblue', zorder=5)
             
-            # Goal marker (green X)
+            # Goal marker
             gx = robot.goal_cell[0] + 0.5
             gy = robot.goal_cell[1] + 0.5
-            ax.plot(gx, gy, 'x', color='green', markersize=8, markeredgewidth=2.5, zorder=5)
+            ax.plot(gx, gy, 'x', color='green', markersize=9, markeredgewidth=2.5, zorder=5)
         
-        ax.set_xlim(0, cols)
-        ax.set_ylim(0, rows)
         ax.set_aspect('equal')
+        
+        # Use tight_layout to prevent clipping
+        plt.tight_layout(pad=0)
         fig.canvas.draw()
         
-        # Convert to array
-        data = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
+        # Convert to array without any resizing
+        buf = fig.canvas.buffer_rgba()
         w, h = fig.canvas.get_width_height()
-        data = data.reshape((h, w, 4))[:,:,:3]
-        plt.close(fig)
+        img_array = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)
+        img_array = img_array[:, :, :3]  # Drop alpha channel
         
-        img_arr = np.array(Image.fromarray(data).resize((cols*cellsize, rows*cellsize)))
-        return img_arr
+        plt.close(fig)
+        return img_array
 
 # --------------------------- Utilities ------------------------------------
 
