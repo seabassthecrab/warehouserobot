@@ -161,7 +161,7 @@ def collision_free_segment(wmap: WarehouseMap, a, b):
             return False
     return True
 
-def build_prm(wmap: WarehouseMap, nsamples=400, k=8, seed=0, inflated=False, radius=1):
+def build_prm(wmap: WarehouseMap, nsamples=400, k=8, seed=0, inflated=False, radius=2):
     """Build PRM with optional footprint inflation."""
     rng = random.Random(seed)
     samples = set()
@@ -228,7 +228,7 @@ def prm_query(prm_graph: nx.Graph, wmap: WarehouseMap, start, goal):
         return None
 
 def rrt_planner(wmap: WarehouseMap, start, goal, max_iters=2000, step=5, 
-                goal_sample_rate=0.05, seed=0, inflated=False, radius=1):
+                goal_sample_rate=0.05, seed=0, inflated=False, radius=2):
     """RRT with optional footprint inflation."""
     rng = random.Random(seed)
     nodes = {start: None}
@@ -275,10 +275,16 @@ def rrt_planner(wmap: WarehouseMap, start, goal, max_iters=2000, step=5,
                 nodes[goal] = q_new
                 path = [goal]
                 cur = goal
-                while cur is not None:
+                visited = {goal}  # Track visited nodes to prevent cycles
+                max_path_length = len(nodes) + 10  # Safety limit
+                while cur is not None and len(path) < max_path_length:
                     cur = nodes[cur]
-                    if cur is not None: 
+                    if cur is not None:
+                        if cur in visited:  # Cycle detected!
+                            print(f"Warning: Cycle detected in RRT path reconstruction")
+                            break
                         path.append(cur)
+                    visited.add(cur)
                 path.reverse()
                 return path
     return None
@@ -446,22 +452,22 @@ def prioritized_planning(wmap: WarehouseMap, robots: List, planner: str = 'astar
         
         if planner == 'astar':
             path = astar_with_reservations(wmap, robot.start_cell, robot.goal_cell,
-                                          all_reservations, inflated=inflated, radius=1)
+                                          all_reservations, inflated=inflated, radius=2)
         elif planner == 'prm' and prm_graph is not None:
             path = prm_query(prm_graph, wmap, robot.start_cell, robot.goal_cell)
         elif planner == 'rrt':
             path = rrt_planner(wmap, robot.start_cell, robot.goal_cell, 
-                             seed=robot.id, inflated=inflated, radius=1)
+                             seed=robot.id, inflated=inflated, radius=2)
         else:
             path = astar_with_reservations(wmap, robot.start_cell, robot.goal_cell,
-                                          all_reservations, inflated=inflated, radius=1)
+                                          all_reservations, inflated=inflated, radius=2)
         
         if path is None:
             print("FAILED - trying without reservations...")
             if planner == 'astar':
-                path = astar_grid(wmap, robot.start_cell, robot.goal_cell, inflated=inflated, radius=1)
+                path = astar_grid(wmap, robot.start_cell, robot.goal_cell, inflated=inflated, radius=2)
             if path is None and inflated:
-                path = astar_grid(wmap, robot.start_cell, robot.goal_cell, inflated=False, radius=0)
+                path = astar_grid(wmap, robot.start_cell, robot.goal_cell, inflated=False, radius=1)
         
         planned_paths[robot.id] = path
         
@@ -485,15 +491,15 @@ class Robot:
     start_cell: Tuple[int,int]
     goal_cell: Tuple[int,int]
     length: float = 2.0
-    width: float = 0.8
+    width: float = 0.6
     x: float = 0.0
     y: float = 0.0
     theta: float = 0.0
     v: float = 0.0
     w: float = 0.0
-    max_speed: float = 3.0
-    max_accel: float = 1
-    max_omega: float = 2.0
+    max_speed: float = 50.0
+    max_accel: float = 10
+    max_omega: float = 8
     path_cells: List[Tuple[int,int]] = field(default_factory=list)
     waypoints: List[Tuple[float,float]] = field(default_factory=list)
     waypoint_idx: int = 0
@@ -502,11 +508,15 @@ class Robot:
     color: Tuple[float,float,float] = (0.2,0.4,1.0)
     enable_orca: bool = False
 
+    
+    prev_heading_error: float = 0.0
+    ang_kp: float = 4.0   # proportional gain
+    ang_kd: float = 0.8   # derivative damping gain
+
     def initialize_from_cells(self):
         self.x = float(self.start_cell[0]) + 0.5
         self.y = float(self.start_cell[1]) + 0.5
         
-        # Initialize heading towards goal for smoother start
         gx = float(self.goal_cell[0]) + 0.5
         gy = float(self.goal_cell[1]) + 0.5
         self.theta = math.atan2(gy - self.y, gx - self.x)
@@ -520,65 +530,79 @@ class Robot:
         return None
 
     def step_control(self, dt=0.1, other_robots=None):
-        """Enhanced controller with optional ORCA collision avoidance."""
         wp = self.current_goal_point()
         if wp is None:
-            self.v = max(0.0, self.v - self.max_accel*dt)
+            self.v = max(0.0, self.v - self.max_accel * dt)
             if abs(self.v) < 1e-2:
                 self.v = 0.0
                 self.done = True
             self.w = 0.0
             return
 
-        # Compute vector to waypoint
+        # vector to waypoint
         dx = wp[0] - self.x
         dy = wp[1] - self.y
         dist = math.hypot(dx, dy)
         desired_theta = math.atan2(dy, dx)
 
-        # ORCA avoidance if enabled
+        # ORCA avoidance (damped)
         if self.enable_orca and other_robots:
             avoid_vx, avoid_vy = orca_velocity(self, other_robots)
-            # Blend avoidance into desired direction
+            avoid_vx *= 0.6
+            avoid_vy *= 0.6
+            if abs(avoid_vx) < 0.02: avoid_vx = 0.0
+            if abs(avoid_vy) < 0.02: avoid_vy = 0.0
             dx += avoid_vx * 2.0
             dy += avoid_vy * 2.0
             desired_theta = math.atan2(dy, dx)
 
-        # Heading error
+        # heading error normalized
         heading_error = (desired_theta - self.theta + math.pi) % (2*math.pi) - math.pi
+        if abs(heading_error) < 0.02:
+            heading_error = 0.0
 
-        # Speed profile - more conservative
-        v_cmd = min(self.max_speed * 0.6, 0.6 * dist)  # Reduced speed limit
-        
-        # Slow down MORE for turns
-        turn_factor = max(0.15, 1 - abs(heading_error)/(math.pi/3))  # Stricter turn slowdown
+        # PD angular controller
+        de = (heading_error - self.prev_heading_error) / dt
+        w_cmd = self.ang_kp * heading_error + self.ang_kd * de
+        w_cmd = max(-self.max_omega, min(self.max_omega, w_cmd))
+
+        # low-pass filter to smooth w
+        alpha = 0.6
+        self.w = alpha * self.w + (1 - alpha) * w_cmd
+        self.prev_heading_error = heading_error
+
+        # speed profile
+        v_cmd = min(self.max_speed * 0.6, 0.6 * dist)
+        turn_factor = max(0.3, 1 - abs(heading_error) / (math.pi / 2))
         v_cmd *= turn_factor
 
-        # Limit speed for turning radius - more conservative
-        min_turn_radius = max(self.length * 0.8, 0.8)  # Larger minimum radius
+        # further slow when turning sharply
+        if abs(heading_error) > math.radians(25):
+            v_cmd *= 0.1
+
+        # turning radius limit
+        min_turn_radius = max(self.length * 0.1, 0.1)
         max_v_for_turn = min_turn_radius * self.max_omega
         if v_cmd > max_v_for_turn:
             v_cmd = max_v_for_turn
 
-        # Accelerate/decelerate
+        # accel/decel
         if self.v < v_cmd:
-            self.v = min(self.v + self.max_accel*dt, v_cmd)
+            self.v = min(self.v + self.max_accel * dt, v_cmd)
         else:
-            self.v = max(self.v - self.max_accel*dt, v_cmd)
+            self.v = max(self.v - self.max_accel * dt, v_cmd)
 
-        # Angular velocity controller - reduced gain for stability
-        self.w = max(-self.max_omega, min(self.max_omega, 2.0 * heading_error))
-
-        # Integrate unicycle dynamics
+        # integrate unicycle dynamics
         self.theta += self.w * dt
         self.x += self.v * math.cos(self.theta) * dt
         self.y += self.v * math.sin(self.theta) * dt
 
-        # Check waypoint reached - larger threshold
-        if dist < 1.0:  # Increased from 0.8 for easier completion
+        # waypoint progress
+        if dist < 0.9 and abs(heading_error) < math.radians(60):
             self.waypoint_idx += 1
             if self.waypoint_idx >= len(self.waypoints):
                 self.done = True
+
 
 # ------------------------ Collision detection ------------------------------
 
@@ -627,7 +651,7 @@ def robot_collision(robot: Robot, other: Robot):
     poly2 = rectangle_corners(other.x, other.y, other.length, other.width, other.theta)
     return polygons_overlap(poly1, poly2)
 
-def robot_map_collision(robot: Robot, wmap: WarehouseMap, margin=0.4):
+def robot_map_collision(robot: Robot, wmap: WarehouseMap, margin=0.1):
     """
     Stricter collision detection - checks multiple points along robot body.
     Returns True if robot overlaps with RACK cells.
@@ -719,12 +743,12 @@ class DynamicMultiRobotSim:
                 
                 if self.planner == 'astar':
                     p = astar_grid(self.wmap, r.start_cell, r.goal_cell, 
-                                  inflated=self.inflated_planning, radius=1)
+                                  inflated=self.inflated_planning, radius=2)
                 elif self.planner == 'prm' and self.prm_graph is not None:
                     p = prm_query(self.prm_graph, self.wmap, r.start_cell, r.goal_cell)
                 elif self.planner == 'rrt':
                     p = rrt_planner(self.wmap, r.start_cell, r.goal_cell, 
-                                   seed=r.id, inflated=self.inflated_planning, radius=1)
+                                   seed=r.id, inflated=self.inflated_planning, radius=2)
                 else:
                     p = astar_grid(self.wmap, r.start_cell, r.goal_cell)
                 
@@ -828,7 +852,7 @@ class DynamicMultiRobotSim:
         
         return frames
 
-    def render_frame(self, cellsize=10, padding=3):
+    def render_frame(self, cellsize=10, padding=10):
         """Render frame with proper padding to show full warehouse area."""
         rows, cols = self.wmap.rows, self.wmap.cols
         
@@ -837,14 +861,14 @@ class DynamicMultiRobotSim:
         total_height = rows + 2 * padding
         
         # Larger figure with higher DPI for better quality
-        fig = plt.figure(figsize=(total_width * 0.2, total_height * 0.2), dpi=80)
+        fig = plt.figure(figsize=(total_width * 0.35, total_height * 0.35), dpi=100)
         ax = fig.add_subplot(111)
         
         # Remove all margins
         fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
         
         ax.set_xlim(-padding, cols + padding)
-        ax.set_ylim(-padding, rows + padding)
+        ax.set_ylim(-padding * 2, rows + padding *2)
         ax.set_xticks([])
         ax.set_yticks([])
         ax.set_facecolor('white')
@@ -963,15 +987,15 @@ def make_demo(rows=40, cols=60, num_robots=4, seed=0, inflated=True):
     """Create demo with proper spawn points considering robot footprint."""
     rng = random.Random(seed)
     wmap = WarehouseMap(rows, cols)
-    wmap.add_racks(rack_rows=2, spacing=3, margin=2)
+    wmap.add_racks(rack_rows=2, spacing=5, margin=2)
     
     robots = []
     used_cells = set()
     min_separation = 3
     
-    # Use radius=1 for spawning even if inflated planning is enabled
+    # Use radius=1.4 for spawning even if inflated planning is enabled
     # This allows spawning in aisles between racks
-    spawn_radius = 1
+    spawn_radius = 2
     
     for i in range(num_robots):
         # Find valid start position
@@ -1052,7 +1076,7 @@ def run_experiment(planner='astar', rows=40, cols=60, num_robots=4, num_trials=5
         prm = None
         if planner == 'prm':
             prm = build_prm(wmap, nsamples=800, k=8, seed=seed, 
-                          inflated=inflated_planning, radius=1)
+                          inflated=inflated_planning, radius=2)
         
         sim = DynamicMultiRobotSim(wmap, robots, planner=planner, prm_graph=prm, 
                                   seed=seed, enable_orca=enable_orca,
@@ -1095,17 +1119,21 @@ def run_comparison_experiments(outdir='outputs'):
     configs = [
         # A* variations
         {'planner': 'astar', 'num_robots': 4, 'enable_orca': False, 'inflated_planning': True, 'coordinated_planning': False},
-        {'planner': 'astar', 'num_robots': 4, 'enable_orca': False, 'inflated_planning': True, 'coordinated_planning': True},
+        #{'planner': 'astar', 'num_robots': 4, 'enable_orca': False, 'inflated_planning': True, 'coordinated_planning': True},
         {'planner': 'astar', 'num_robots': 4, 'enable_orca': True, 'inflated_planning': True, 'coordinated_planning': False},
-        {'planner': 'astar', 'num_robots': 4, 'enable_orca': True, 'inflated_planning': True, 'coordinated_planning': True},
+        #{'planner': 'astar', 'num_robots': 4, 'enable_orca': True, 'inflated_planning': True, 'coordinated_planning': True},
         
         # PRM comparison
         {'planner': 'prm', 'num_robots': 4, 'enable_orca': False, 'inflated_planning': True, 'coordinated_planning': False},
-        {'planner': 'prm', 'num_robots': 4, 'enable_orca': True, 'inflated_planning': True, 'coordinated_planning': False},
+        {'planner': 'prm', 'num_robots': 4, 'enable_orca': True, 'inflated_planning': True, 'coordinated_planning': True},
+        # RRT comparison
+        {'planner': 'rrt', 'num_robots': 4, 'enable_orca': False, 'inflated_planning': True, 'coordinated_planning': False},
+        {'planner': 'rrt', 'num_robots': 4, 'enable_orca': True, 'inflated_planning': True, 'coordinated_planning': True},
+
         
         # Scaling test
-        {'planner': 'astar', 'num_robots': 8, 'enable_orca': False, 'inflated_planning': True, 'coordinated_planning': True},
-        {'planner': 'astar', 'num_robots': 8, 'enable_orca': True, 'inflated_planning': True, 'coordinated_planning': True},
+        #{'planner': 'astar', 'num_robots': 8, 'enable_orca': False, 'inflated_planning': True, 'coordinated_planning': True},
+        #{'planner': 'astar', 'num_robots': 8, 'enable_orca': True, 'inflated_planning': True, 'coordinated_planning': True},
     ]
     
     all_results = []
