@@ -347,6 +347,136 @@ def orca_velocity(robot, others, time_horizon=2.0, max_neighbors=5):
     
     return (avoid_vx, avoid_vy)
 
+# ------------------------ Multi-Robot Coordination -------------------------
+
+def create_spacetime_reservation(path_cells, robot_id, dt=0.2):
+    """
+    Create space-time reservations from a path.
+    Returns dict: {timestep: set of occupied cells}
+    """
+    reservations = {}
+    time = 0.0
+    for i, cell in enumerate(path_cells):
+        start_time = int(time / dt)
+        end_time = int((time + 3.0) / dt)
+        
+        for t in range(start_time, end_time + 1):
+            if t not in reservations:
+                reservations[t] = set()
+            reservations[t].add(cell)
+            for dr, dc in [(-1,0), (1,0), (0,-1), (0,1)]:
+                neighbor = (cell[0] + dr, cell[1] + dc)
+                reservations[t].add(neighbor)
+        
+        time += 1.0
+    
+    return reservations
+
+def astar_with_reservations(wmap: WarehouseMap, start: Tuple[int,int], goal: Tuple[int,int],
+                            reservations: Dict[int, set], inflated: bool = False, 
+                            radius: int = 1) -> Optional[List[Tuple[int,int]]]:
+    """A* that avoids reserved space-time cells."""
+    import heapq
+    
+    if inflated:
+        if not wmap.is_free_inflated(start, radius) or not wmap.is_free_inflated(goal, radius):
+            return None
+    else:
+        if not wmap.is_free(start) or not wmap.is_free(goal):
+            return None
+    
+    open_set = []
+    heapq.heappush(open_set, (0 + heuristic(start, goal), 0, 0, start))
+    came_from = {}
+    gscore = {(start, 0): 0}
+    closed = set()
+    
+    while open_set:
+        _, g, t, current = heapq.heappop(open_set)
+        
+        if current == goal:
+            path = [current]
+            node = (current, t)
+            while node in came_from:
+                node = came_from[node]
+                if node[0] is not None:
+                    path.append(node[0])
+            path.reverse()
+            return path
+        
+        if (current, t) in closed:
+            continue
+        closed.add((current, t))
+        
+        neighbors = wmap.neighbors4_inflated(current, radius) if inflated else wmap.neighbors4(current)
+        
+        for nb in neighbors:
+            next_time = t + 1
+            if next_time in reservations and nb in reservations[next_time]:
+                continue
+            
+            tentative = g + 1
+            node_key = (nb, next_time)
+            
+            if tentative < gscore.get(node_key, 1e9):
+                gscore[node_key] = tentative
+                came_from[node_key] = (current, t)
+                heapq.heappush(open_set, (tentative + heuristic(nb, goal), tentative, next_time, nb))
+        
+        if t < 1000:
+            wait_node = (current, t + 1)
+            if current not in reservations.get(t + 1, set()):
+                if g + 1 < gscore.get(wait_node, 1e9):
+                    gscore[wait_node] = g + 1
+                    came_from[wait_node] = (current, t)
+                    heapq.heappush(open_set, (g + 1 + heuristic(current, goal), g + 1, t + 1, current))
+    
+    return None
+
+def prioritized_planning(wmap: WarehouseMap, robots: List, planner: str = 'astar',
+                        prm_graph: Optional[nx.Graph] = None, inflated: bool = True) -> Dict[int, List]:
+    """Plan paths for all robots with priorities."""
+    sorted_robots = sorted(robots, key=lambda r: r.id)
+    
+    all_reservations = {}
+    planned_paths = {}
+    
+    for robot in sorted_robots:
+        print(f"  Robot {robot.id}: Planning with {len(all_reservations)} timesteps reserved...", end=" ")
+        
+        if planner == 'astar':
+            path = astar_with_reservations(wmap, robot.start_cell, robot.goal_cell,
+                                          all_reservations, inflated=inflated, radius=1)
+        elif planner == 'prm' and prm_graph is not None:
+            path = prm_query(prm_graph, wmap, robot.start_cell, robot.goal_cell)
+        elif planner == 'rrt':
+            path = rrt_planner(wmap, robot.start_cell, robot.goal_cell, 
+                             seed=robot.id, inflated=inflated, radius=1)
+        else:
+            path = astar_with_reservations(wmap, robot.start_cell, robot.goal_cell,
+                                          all_reservations, inflated=inflated, radius=1)
+        
+        if path is None:
+            print("FAILED - trying without reservations...")
+            if planner == 'astar':
+                path = astar_grid(wmap, robot.start_cell, robot.goal_cell, inflated=inflated, radius=1)
+            if path is None and inflated:
+                path = astar_grid(wmap, robot.start_cell, robot.goal_cell, inflated=False, radius=0)
+        
+        planned_paths[robot.id] = path
+        
+        if path:
+            print(f"SUCCESS (length: {len(path)})")
+            robot_reservations = create_spacetime_reservation(path, robot.id)
+            for t, cells in robot_reservations.items():
+                if t not in all_reservations:
+                    all_reservations[t] = set()
+                all_reservations[t].update(cells)
+        else:
+            print("FAILED - no path found")
+            planned_paths[robot.id] = None
+    
+    return planned_paths
 # ------------------------- Robot dynamics ---------------------------------
 
 @dataclass
@@ -355,14 +485,14 @@ class Robot:
     start_cell: Tuple[int,int]
     goal_cell: Tuple[int,int]
     length: float = 2.0
-    width: float = 1.0
+    width: float = 0.8
     x: float = 0.0
     y: float = 0.0
     theta: float = 0.0
     v: float = 0.0
     w: float = 0.0
-    max_speed: float = 1.0
-    max_accel: float = 0.5
+    max_speed: float = 3.0
+    max_accel: float = 1
     max_omega: float = 2.0
     path_cells: List[Tuple[int,int]] = field(default_factory=list)
     waypoints: List[Tuple[float,float]] = field(default_factory=list)
@@ -445,7 +575,7 @@ class Robot:
         self.y += self.v * math.sin(self.theta) * dt
 
         # Check waypoint reached - larger threshold
-        if dist < 0.8:  # Increased from 0.6
+        if dist < 1.0:  # Increased from 0.8 for easier completion
             self.waypoint_idx += 1
             if self.waypoint_idx >= len(self.waypoints):
                 self.done = True
@@ -497,26 +627,33 @@ def robot_collision(robot: Robot, other: Robot):
     poly2 = rectangle_corners(other.x, other.y, other.length, other.width, other.theta)
     return polygons_overlap(poly1, poly2)
 
-def robot_map_collision(robot: Robot, wmap: WarehouseMap, margin=0.3):
-    """Enhanced collision detection with safety margin - only checks for RACK collisions."""
+def robot_map_collision(robot: Robot, wmap: WarehouseMap, margin=0.4):
+    """
+    Stricter collision detection - checks multiple points along robot body.
+    Returns True if robot overlaps with RACK cells.
+    """
     corners = rectangle_corners(robot.x, robot.y, robot.length + margin, robot.width + margin, robot.theta)
     
+    # Check all corners
     for (cx, cy) in corners:
         r = int(math.floor(cx))
         c = int(math.floor(cy))
-        
-        # Only check if we're in bounds - don't treat out-of-bounds as collision
-        # This allows robots to reach goals near the edges
-        if wmap.in_bounds((r, c)):
-            if wmap.grid[r, c] == RACK:
-                return True
+        if wmap.in_bounds((r, c)) and wmap.grid[r, c] == RACK:
+            return True
     
-    # Also check center point for safety
+    # Check center
     center_r = int(math.floor(robot.x))
     center_c = int(math.floor(robot.y))
-    if wmap.in_bounds((center_r, center_c)):
-        if wmap.grid[center_r, center_c] == RACK:
-            return True
+    if wmap.in_bounds((center_r, center_c)) and wmap.grid[center_r, center_c] == RACK:
+        return True
+    
+    # Check midpoints of robot edges for better coverage
+    front_x = robot.x + (robot.length/2) * math.cos(robot.theta)
+    front_y = robot.y + (robot.length/2) * math.sin(robot.theta)
+    front_r = int(math.floor(front_x))
+    front_c = int(math.floor(front_y))
+    if wmap.in_bounds((front_r, front_c)) and wmap.grid[front_r, front_c] == RACK:
+        return True
     
     return False
 
@@ -534,7 +671,7 @@ class Metrics:
 class DynamicMultiRobotSim:
     def __init__(self, wmap: WarehouseMap, robots: List[Robot], planner='astar', 
                  prm_graph: Optional[nx.Graph]=None, seed=0, enable_orca=False,
-                 inflated_planning=True):
+                 inflated_planning=True, coordinated_planning=True):
         self.wmap = wmap
         self.robots = robots
         self.prm_graph = prm_graph
@@ -544,6 +681,7 @@ class DynamicMultiRobotSim:
         self.metrics = Metrics()
         self.enable_orca = enable_orca
         self.inflated_planning = inflated_planning
+        self.coordinated_planning = coordinated_planning
         random.seed(seed)
         self.seed = seed
         
@@ -555,33 +693,66 @@ class DynamicMultiRobotSim:
         successful_plans = 0
         total_path_length = 0
         
-        for r in self.robots:
-            if self.planner == 'astar':
-                p = astar_grid(self.wmap, r.start_cell, r.goal_cell, 
-                              inflated=self.inflated_planning, radius=1)
-            elif self.planner == 'prm' and self.prm_graph is not None:
-                p = prm_query(self.prm_graph, self.wmap, r.start_cell, r.goal_cell)
-            elif self.planner == 'rrt':
-                p = rrt_planner(self.wmap, r.start_cell, r.goal_cell, 
-                               seed=r.id, inflated=self.inflated_planning, radius=1)
-            else:
-                p = astar_grid(self.wmap, r.start_cell, r.goal_cell)
+        print("\n=== Path Planning Phase ===")
+        
+        if self.coordinated_planning and self.planner == 'astar':
+            print("Using PRIORITIZED PLANNING (coordinated multi-robot)")
+            planned_paths = prioritized_planning(self.wmap, self.robots, self.planner,
+                                                self.prm_graph, self.inflated_planning)
             
-            if p is None:
-                print(f"Warning: Robot {r.id} failed to find path from {r.start_cell} to {r.goal_cell}")
-                r.path_cells = []
-                r.waypoints = []
-            else:
-                r.path_cells = p
-                successful_plans += 1
-                total_path_length += len(p)
-            
-            r.initialize_from_cells()
+            for r in self.robots:
+                p = planned_paths.get(r.id)
+                if p is None or len(p) == 0:
+                    print(f"Robot {r.id}: No valid path")
+                    r.path_cells = []
+                    r.waypoints = []
+                else:
+                    r.path_cells = p
+                    successful_plans += 1
+                    total_path_length += len(p)
+                
+                r.initialize_from_cells()
+        else:
+            print("Using INDEPENDENT PLANNING (no coordination)")
+            for r in self.robots:
+                print(f"Robot {r.id}: Planning from {r.start_cell} to {r.goal_cell}...", end=" ")
+                
+                if self.planner == 'astar':
+                    p = astar_grid(self.wmap, r.start_cell, r.goal_cell, 
+                                  inflated=self.inflated_planning, radius=1)
+                elif self.planner == 'prm' and self.prm_graph is not None:
+                    p = prm_query(self.prm_graph, self.wmap, r.start_cell, r.goal_cell)
+                elif self.planner == 'rrt':
+                    p = rrt_planner(self.wmap, r.start_cell, r.goal_cell, 
+                                   seed=r.id, inflated=self.inflated_planning, radius=1)
+                else:
+                    p = astar_grid(self.wmap, r.start_cell, r.goal_cell)
+                
+                if p is None:
+                    print(f"❌ FAILED (no path found)")
+                    if self.inflated_planning:
+                        print(f"  Retrying without inflation...")
+                        p = astar_grid(self.wmap, r.start_cell, r.goal_cell, inflated=False, radius=0)
+                        if p:
+                            print(f"  ✓ Found path without inflation (length: {len(p)})")
+                    
+                if p is None:
+                    print(f"  Warning: No valid path exists for robot {r.id}")
+                    r.path_cells = []
+                    r.waypoints = []
+                else:
+                    r.path_cells = p
+                    successful_plans += 1
+                    total_path_length += len(p)
+                    print(f"✓ Path found (length: {len(p)} cells)")
+                
+                r.initialize_from_cells()
         
         self.metrics.plan_success_rate = successful_plans / len(self.robots) if self.robots else 0
         self.metrics.avg_path_length = total_path_length / successful_plans if successful_plans > 0 else 0
         
-        print(f"Planning complete: {successful_plans}/{len(self.robots)} robots have valid paths")
+        print(f"\nPlanning Summary: {successful_plans}/{len(self.robots)} robots have valid paths")
+        print("=" * 40)
 
     def step(self):
         # Update each robot with ORCA
@@ -616,7 +787,8 @@ class DynamicMultiRobotSim:
         self.metrics.total_steps += 1
         self.time += self.dt
 
-    def run(self, max_steps=400, visualize=False, outdir='outputs'):
+    def run(self, max_steps=600, visualize=False, outdir='outputs'):
+        """Run simulation with adjustable max_steps."""
         frames = []
         start_time = time.time()
         
@@ -624,11 +796,17 @@ class DynamicMultiRobotSim:
             if all(r.done or r.collided for r in self.robots):
                 break
             self.step()
-            if visualize and step % 2 == 0:  # Sample every other frame for efficiency
+            if visualize:  # Capture every frame for smoother animation
                 frames.append(self.render_frame())
         
         runtime = time.time() - start_time
         self.metrics.runtimes.append(runtime)
+        
+        # Print status of each robot
+        print(f"\nSimulation ended at step {self.metrics.total_steps}/{max_steps}")
+        for r in self.robots:
+            status = "DONE" if r.done else ("COLLIDED" if r.collided else "INCOMPLETE")
+            print(f"  Robot {r.id}: {status} (waypoint {r.waypoint_idx}/{len(r.waypoints)})")
         
         if visualize and frames:
             os.makedirs(outdir, exist_ok=True)
@@ -639,10 +817,13 @@ class DynamicMultiRobotSim:
             imgs = [Image.fromarray(f) for f in frames]
             
             # Verify first frame size
-            print(f"Frame dimensions: {imgs[0].size}")
+            print(f"Frame dimensions: {imgs[0].size}, Total frames: {len(imgs)}")
+            
+            # Smoother animation: shorter duration per frame
+            frame_duration = int(1000 * self.dt * 0.5)  # 0.5x speed for smoother playback
             
             imgs[0].save(gif_path, save_all=True, append_images=imgs[1:], 
-                        duration=int(1000*self.dt*2), loop=0, optimize=False)
+                        duration=frame_duration, loop=0, optimize=False)
             print(f'Saved GIF to {gif_path}')
         
         return frames
@@ -695,23 +876,39 @@ class DynamicMultiRobotSim:
         for robot in self.robots:
             cx, cy = robot.x, robot.y
             L, W = robot.length, robot.width
-            angle = math.degrees(robot.theta)
+            theta_deg = math.degrees(robot.theta)
             
             if robot.collided:
                 fcolor = (0.5, 0.5, 0.5)
             else:
                 fcolor = cmap(robot.id % 10)
             
-            rect = patches.Rectangle((cx - L/2, cy - W/2), L, W, 
-                                     angle=angle, facecolor=fcolor, alpha=0.9,
+            # Create rectangle centered at origin, with length along x-axis
+            # The length (L) is the forward direction, width (W) is the side
+            rect = patches.Rectangle((-L/2, -W/2), L, W, 
+                                     angle=0,  # Start unrotated
+                                     facecolor=fcolor, alpha=0.9,
                                      edgecolor='black', linewidth=0.5, zorder=3)
-            t = patches.Affine2D().rotate_deg_around(cx, cy, angle) + ax.transData
+            
+            # Apply rotation around center, then translate to robot position
+            t = (patches.Affine2D()
+                 .rotate(robot.theta)  # Rotate by theta radians
+                 .translate(cx, cy)    # Move to robot position
+                 + ax.transData)
             rect.set_transform(t)
             ax.add_patch(rect)
             
-            arrow_len = min(L * 0.3, 0.4)
-            ax.arrow(cx, cy, arrow_len*math.cos(robot.theta), arrow_len*math.sin(robot.theta), 
-                    head_width=0.15, head_length=0.15, fc='k', ec='k', linewidth=0.8, zorder=4)
+            # Draw heading arrow at front of robot
+            # Arrow points from center towards the front
+            arrow_len = L * 0.4  # Slightly longer to be more visible
+            arrow_start_x = cx
+            arrow_start_y = cy
+            arrow_dx = arrow_len * math.cos(robot.theta)
+            arrow_dy = arrow_len * math.sin(robot.theta)
+            
+            ax.arrow(arrow_start_x, arrow_start_y, arrow_dx, arrow_dy,
+                    head_width=0.3, head_length=0.25, fc='yellow', ec='black', 
+                    linewidth=1.5, zorder=4, length_includes_head=True)
             
             # Start marker
             sx = robot.start_cell[0] + 0.5
@@ -770,13 +967,21 @@ def make_demo(rows=40, cols=60, num_robots=4, seed=0, inflated=True):
     
     robots = []
     used_cells = set()
-    min_separation = 3  # Minimum distance between robot start positions
+    min_separation = 3
+    
+    # Use radius=1 for spawning even if inflated planning is enabled
+    # This allows spawning in aisles between racks
+    spawn_radius = 1
     
     for i in range(num_robots):
         # Find valid start position
-        max_attempts = 100
+        max_attempts = 200
         for attempt in range(max_attempts):
-            s = random_free_cell(wmap, rng, inflated=inflated, radius=1)
+            s = random_free_cell(wmap, rng, inflated=True, radius=spawn_radius)
+            
+            # Additional check: ensure spawn is not at the extreme edges
+            if s[0] < 2 or s[0] > rows - 3 or s[1] < 2 or s[1] > cols - 3:
+                continue
             
             # Check minimum separation from other robots
             too_close = False
@@ -787,16 +992,29 @@ def make_demo(rows=40, cols=60, num_robots=4, seed=0, inflated=True):
             
             if not too_close:
                 break
+        else:
+            print(f"Warning: Could not find well-separated start for robot {i}, using best available")
         
         used_cells.add(s)
         
         # Find valid goal position
         for attempt in range(max_attempts):
-            g = random_free_cell(wmap, rng, inflated=inflated, radius=1)
+            g = random_free_cell(wmap, rng, inflated=True, radius=spawn_radius)
+            
+            # Ensure goal is also not at extreme edges
+            if g[0] < 2 or g[0] > rows - 3 or g[1] < 2 or g[1] > cols - 3:
+                continue
             
             # Ensure goal is different from start and not too close to start
-            if g != s and abs(g[0] - s[0]) + abs(g[1] - s[1]) > 5:
-                break
+            if g != s and abs(g[0] - s[0]) + abs(g[1] - s[1]) > 8:
+                # Also check goal isn't too close to other goals
+                too_close = False
+                for other in robots:
+                    if abs(g[0] - other.goal_cell[0]) + abs(g[1] - other.goal_cell[1]) < min_separation:
+                        too_close = True
+                        break
+                if not too_close:
+                    break
         
         r = Robot(id=i, start_cell=s, goal_cell=g)
         robots.append(r)
@@ -806,14 +1024,15 @@ def make_demo(rows=40, cols=60, num_robots=4, seed=0, inflated=True):
 # --------------------------- Experiment Runner ----------------------------
 
 def run_experiment(planner='astar', rows=40, cols=60, num_robots=4, num_trials=5, 
-                   enable_orca=False, inflated_planning=True, max_steps=400, 
-                   visualize_first=False, outdir='outputs'):
+                   enable_orca=False, inflated_planning=True, coordinated_planning=True,
+                   max_steps=600, visualize_first=False, outdir='outputs'):
     """Run multiple trials and collect statistics."""
     results = {
         'planner': planner,
         'num_robots': num_robots,
         'enable_orca': enable_orca,
         'inflated_planning': inflated_planning,
+        'coordinated_planning': coordinated_planning,
         'trials': [],
         'avg_success_rate': 0.0,
         'avg_collision_rate': 0.0,
@@ -837,7 +1056,8 @@ def run_experiment(planner='astar', rows=40, cols=60, num_robots=4, num_trials=5
         
         sim = DynamicMultiRobotSim(wmap, robots, planner=planner, prm_graph=prm, 
                                   seed=seed, enable_orca=enable_orca,
-                                  inflated_planning=inflated_planning)
+                                  inflated_planning=inflated_planning,
+                                  coordinated_planning=coordinated_planning)
         sim.plan_all()
         
         visualize = (trial == 0 and visualize_first)
@@ -873,19 +1093,19 @@ def run_comparison_experiments(outdir='outputs'):
     os.makedirs(outdir, exist_ok=True)
     
     configs = [
-        # Basic comparison
-        {'planner': 'astar', 'num_robots': 4, 'enable_orca': False, 'inflated_planning': True},
-        {'planner': 'prm', 'num_robots': 4, 'enable_orca': False, 'inflated_planning': True},
-        {'planner': 'rrt', 'num_robots': 4, 'enable_orca': False, 'inflated_planning': True},
+        # A* variations
+        {'planner': 'astar', 'num_robots': 4, 'enable_orca': False, 'inflated_planning': True, 'coordinated_planning': False},
+        {'planner': 'astar', 'num_robots': 4, 'enable_orca': False, 'inflated_planning': True, 'coordinated_planning': True},
+        {'planner': 'astar', 'num_robots': 4, 'enable_orca': True, 'inflated_planning': True, 'coordinated_planning': False},
+        {'planner': 'astar', 'num_robots': 4, 'enable_orca': True, 'inflated_planning': True, 'coordinated_planning': True},
         
-        # With ORCA
-        {'planner': 'astar', 'num_robots': 4, 'enable_orca': True, 'inflated_planning': True},
-        {'planner': 'prm', 'num_robots': 4, 'enable_orca': True, 'inflated_planning': True},
-        {'planner': 'rrt', 'num_robots': 4, 'enable_orca': True, 'inflated_planning': True},
+        # PRM comparison
+        {'planner': 'prm', 'num_robots': 4, 'enable_orca': False, 'inflated_planning': True, 'coordinated_planning': False},
+        {'planner': 'prm', 'num_robots': 4, 'enable_orca': True, 'inflated_planning': True, 'coordinated_planning': False},
         
         # Scaling test
-        {'planner': 'astar', 'num_robots': 8, 'enable_orca': False, 'inflated_planning': True},
-        {'planner': 'astar', 'num_robots': 8, 'enable_orca': True, 'inflated_planning': True},
+        {'planner': 'astar', 'num_robots': 8, 'enable_orca': False, 'inflated_planning': True, 'coordinated_planning': True},
+        {'planner': 'astar', 'num_robots': 8, 'enable_orca': True, 'inflated_planning': True, 'coordinated_planning': True},
     ]
     
     all_results = []
@@ -895,9 +1115,10 @@ def run_comparison_experiments(outdir='outputs'):
     print("=" * 60)
     
     for i, config in enumerate(configs):
+        coord_str = "COORD" if config['coordinated_planning'] else "INDEP"
+        orca_str = "ORCA" if config['enable_orca'] else "BASIC"
         print(f"\nConfig {i+1}/{len(configs)}: {config['planner'].upper()}, "
-              f"robots={config['num_robots']}, ORCA={config['enable_orca']}, "
-              f"inflated={config['inflated_planning']}")
+              f"robots={config['num_robots']}, {coord_str}, {orca_str}")
         
         results = run_experiment(
             planner=config['planner'],
@@ -905,7 +1126,8 @@ def run_comparison_experiments(outdir='outputs'):
             num_trials=5,
             enable_orca=config['enable_orca'],
             inflated_planning=config['inflated_planning'],
-            visualize_first=(i < 3),  # Visualize first 3 configs
+            coordinated_planning=config.get('coordinated_planning', False),
+            visualize_first=(i < 2),  # Visualize first 2 configs
             outdir=outdir
         )
         all_results.append(results)
@@ -915,20 +1137,24 @@ def run_comparison_experiments(outdir='outputs'):
     plot_comparison_results(all_results, outdir)
     
     # Print summary table
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 80)
     print("SUMMARY RESULTS")
-    print("=" * 60)
-    print(f"{'Config':<40} {'Success':<10} {'Collisions':<12} {'Runtime':<10}")
-    print("-" * 60)
+    print("=" * 80)
+    print(f"{'Config':<50} {'Success':<10} {'Collisions':<12} {'Runtime':<10}")
+    print("-" * 80)
     
     for res in all_results:
         config_str = f"{res['planner']}-R{res['num_robots']}"
+        if res.get('coordinated_planning'):
+            config_str += "-COORD"
+        else:
+            config_str += "-INDEP"
         if res['enable_orca']:
             config_str += "-ORCA"
         if res['inflated_planning']:
             config_str += "-INF"
         
-        print(f"{config_str:<40} {res['avg_success_rate']:<10.2%} "
+        print(f"{config_str:<50} {res['avg_success_rate']:<10.2%} "
               f"{res['avg_collision_rate']:<12.2%} {res['avg_runtime']:<10.2f}s")
     
     print("\nResults saved to:", outdir)
@@ -1041,10 +1267,12 @@ def parse_args():
                    help='Number of robots')
     p.add_argument('--seed', type=int, default=0,
                    help='Random seed')
-    p.add_argument('--max-steps', type=int, default=400,
-                   help='Maximum simulation steps')
+    p.add_argument('--max-steps', type=int, default=600,
+                   help='Maximum simulation steps (increased default for longer runs)')
     p.add_argument('--enable-orca', action='store_true',
                    help='Enable ORCA collision avoidance')
+    p.add_argument('--coordinated', action='store_true',
+                   help='Enable coordinated planning (robots avoid each other\'s planned paths)')
     p.add_argument('--no-inflation', action='store_true',
                    help='Disable obstacle inflation during planning')
     p.add_argument('--num-trials', type=int, default=5,
@@ -1062,6 +1290,7 @@ def main():
         
     elif args.mode == 'experiment':
         # Run experiment with specified config
+        coord_enabled = getattr(args, 'coordinated', False)
         print(f"Running experiment: {args.planner}, {args.num_robots} robots, {args.num_trials} trials")
         results = run_experiment(
             planner=args.planner,
@@ -1071,6 +1300,7 @@ def main():
             num_trials=args.num_trials,
             enable_orca=args.enable_orca,
             inflated_planning=not args.no_inflation,
+            coordinated_planning=coord_enabled,
             max_steps=args.max_steps,
             visualize_first=True,
             outdir=args.outdir
@@ -1082,6 +1312,7 @@ def main():
         print(f"Planner: {results['planner']}")
         print(f"Robots: {results['num_robots']}")
         print(f"ORCA: {results['enable_orca']}")
+        print(f"Coordinated: {results.get('coordinated_planning', False)}")
         print(f"Inflated Planning: {results['inflated_planning']}")
         print(f"Average Success Rate: {results['avg_success_rate']:.2%}")
         print(f"Average Collision Rate: {results['avg_collision_rate']:.2%}")
@@ -1091,7 +1322,10 @@ def main():
         
     else:
         # Single run mode
+        coord_enabled = getattr(args, 'coordinated', False)
         print(f"Running single simulation: {args.planner}, {args.num_robots} robots")
+        print(f"Coordinated planning: {coord_enabled}, ORCA: {args.enable_orca}")
+        
         wmap, robots = make_demo(rows=args.rows, cols=args.cols, 
                                 num_robots=args.num_robots, seed=args.seed,
                                 inflated=not args.no_inflation)
@@ -1104,7 +1338,8 @@ def main():
         
         sim = DynamicMultiRobotSim(wmap, robots, planner=args.planner, prm_graph=prm, 
                                   seed=args.seed, enable_orca=args.enable_orca,
-                                  inflated_planning=not args.no_inflation)
+                                  inflated_planning=not args.no_inflation,
+                                  coordinated_planning=coord_enabled)
         
         print("Planning paths...")
         sim.plan_all()
