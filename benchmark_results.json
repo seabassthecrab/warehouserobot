@@ -1,0 +1,268 @@
+{
+  "metrics": [
+    {
+      "planner": "A*",
+      "num_robots": 1,
+      "planning_time": 0.000804901123046875,
+      "execution_time": 0.005096435546875,
+      "path_length": 9.656854249492381,
+      "collisions": 0,
+      "success_rate": 1.0,
+      "nodes_explored": 38,
+      "smoothness": 0.20943951726379434
+    },
+    {
+      "planner": "PRM",
+      "num_robots": 1,
+      "planning_time": 0.7818398475646973,
+      "execution_time": 0.00433802604675293,
+      "path_length": 11.58464509307285,
+      "collisions": 0,
+      "success_rate": 1.0,
+      "nodes_explored": 30,
+      "smoothness": 0.4446320504157431
+    },
+    {
+      "planner": "RRT*",
+      "num_robots": 1,
+      "planning_time": 0.06360936164855957,
+      "execution_time": 0.004276752471923828,
+      "path_length": 11.101442637632617,
+      "collisions": 0,
+      "success_rate": 1.0,
+      "nodes_explored": 149,
+      "smoothness": 0.4324427244062569
+    },
+    {
+      "planner": "A* + ORCA",
+      "num_robots": 1,
+      "planning_time": 0.0009458065032958984,
+      "execution_time": 0.09247899055480957,
+      "path_length": 9.656854249492381,
+      "collisions": 0,
+      "success_rate": 0.0,
+      "nodes_explored": 38,
+      "smoothness": 0.20943951726379434
+    },
+    {
+      "planner": "PRM + ORCA",
+      "num_robots": 1,
+      "planning_time": 0.7486879825592041,
+      "execution_time": 0.09007954597473145,
+      "path_length": 11.58464509307285,
+      "collisions": 0,
+      "success_rate": 0.0,
+      "nodes_explored": 30,
+      "smoothness": 0.4446320504157431
+    },
+    {
+      "planner": "RRT* + ORCA",
+      "num_robots": 1,
+      "planning_time": 0.06642389297485352,
+      "execution_time": 0.09553313255310059,
+      "path_length": 11.101442637632617,
+      "collisions": 0,
+      "success_rate": 0.0,
+      "nodes_explored": 149,
+      "smoothness": 0.4324427244062569
+    },
+    {
+      "planner": "A*",
+      "num_robots": 2,
+      "planning_time": 0.0233919620513916,
+      "execution_time": 0.02474665641784668,
+      "path_length": 20.253048327204933,
+      "collisions": 0,
+      "success_rate": 1.0,
+      "nodes_explored": 848,
+      "smoothness": 0.3223024478606912
+    },
+    {
+      "planner": "PRM",
+      "num_robots": 2,
+      "planning_time": 1.5079066753387451,
+      "execution_time": 0.009148359298706055,
+      "path_length": 15.59179401498369,
+      "collisions": 0,
+      "success_rate": 1.0,
+      "nodes_explored": 154,
+      "smoothness": 0.48601592392267656
+    },
+    {
+      "planner": "RRT*",
+      "num_robots": 2,
+      "planning_time": 0.39820313453674316,
+      "execution_time": 0.019538402557373047,
+      "path_length": 20.324669838487594,
+      "collisions": 0,
+      "success_rate": 1.0,
+      "nodes_explored": 573,
+      "smoothness": 0.36113499898929136
+    },
+    {
+      "planner": "A* + ORCA",
+      "num_robots": 2,
+      "planning_time": 0.020950794219970703,
+      "execution_time": 0.4286832809448242,
+      "path_length": 20.253048327204933,
+      "collisions": 0,
+      "success_rate": 0.0,
+      "nodes_explored": 848,
+      "smoothness": 0.3223024478606912
+    },
+    {
+      "planner": "PRM + ORCA",
+      "num_robots": 2,
+      "planning_time": 1.5072755813598633,
+      "execution_time": 0.4357428550720215,
+      "path_length": 15.59179401498369,
+      "collisions": 1,
+      "success_rate": 0.0,
+      "nodes_explored": 154,
+      "smoothness": 0.48601592392267656
+    },
+    {
+      "planner": "RRT* + ORCA",
+      "num_robots": 2,
+      "planning_time": 0.4043464660644531,
+      "execution_time": 0.41194629669189453,
+      "path_length": 20.324669838487594,
+      "collisions": 0,
+      "success_rate": 0.0,
+      "nodes_explored": 573,
+      "smoothness": 0.36113499898929136
+    },
+    {
+      "planner": "A*",
+      "num_robots": 4,
+      "planning_time": 0.01765584945678711,
+      "execution_time": 0.04619622230529785,
+      "path_length": 16.62652416360247,
+      "collisions": 0,
+      "success_rate": 1.0,
+      "nodes_explored": 818,
+      "smoothness": 0.3104910000862376
+    },
+    {
+      "planner": "PRM",
+      "num_robots": 4,
+      "planning_time": 2.9023914337158203,
+      "execution_time": 0.02097177505493164,
+      "path_length": 13.999475328584547,
+      "collisions": 0,
+      "success_rate": 1.0,
+      "nodes_explored": 109,
+      "smoothness": 0.45398122464314794
+    },
+    {
+      "planner": "RRT*",
+      "num_robots": 4,
+      "planning_time": 0.2762174606323242,
+      "execution_time": 0.04429054260253906,
+      "path_length": 19.909679159805336,
+      "collisions": 0,
+      "success_rate": 1.0,
+      "nodes_explored": 623,
+      "smoothness": 0.31955757041731186
+    },
+    {
+      "planner": "A* + ORCA",
+      "num_robots": 4,
+      "planning_time": 0.021706581115722656,
+      "execution_time": 1.5915250778198242,
+      "path_length": 16.62652416360247,
+      "collisions": 2,
+      "success_rate": 0.0,
+      "nodes_explored": 818,
+      "smoothness": 0.3104910000862376
+    },
+    {
+      "planner": "PRM + ORCA",
+      "num_robots": 4,
+      "planning_time": 2.983539581298828,
+      "execution_time": 1.6290092468261719,
+      "path_length": 13.999475328584547,
+      "collisions": 3,
+      "success_rate": 0.0,
+      "nodes_explored": 109,
+      "smoothness": 0.45398122464314794
+    },
+    {
+      "planner": "RRT* + ORCA",
+      "num_robots": 4,
+      "planning_time": 0.30135607719421387,
+      "execution_time": 1.6653671264648438,
+      "path_length": 19.909679159805336,
+      "collisions": 2,
+      "success_rate": 0.0,
+      "nodes_explored": 623,
+      "smoothness": 0.31955757041731186
+    },
+    {
+      "planner": "A*",
+      "num_robots": 8,
+      "planning_time": 0.04582548141479492,
+      "execution_time": 0.07941722869873047,
+      "path_length": 15.81846590184406,
+      "collisions": 0,
+      "success_rate": 1.0,
+      "nodes_explored": 1793,
+      "smoothness": 0.20194530512108783
+    },
+    {
+      "planner": "PRM",
+      "num_robots": 8,
+      "planning_time": 6.138157844543457,
+      "execution_time": 0.05095934867858887,
+      "path_length": 16.73834283960569,
+      "collisions": 0,
+      "success_rate": 1.0,
+      "nodes_explored": 645,
+      "smoothness": 0.4339741484933819
+    },
+    {
+      "planner": "RRT*",
+      "num_robots": 8,
+      "planning_time": 1.7697269916534424,
+      "execution_time": 0.11161446571350098,
+      "path_length": 23.537131016673737,
+      "collisions": 0,
+      "success_rate": 1.0,
+      "nodes_explored": 2198,
+      "smoothness": 0.3106926765702056
+    },
+    {
+      "planner": "A* + ORCA",
+      "num_robots": 8,
+      "planning_time": 0.04044079780578613,
+      "execution_time": 5.697713375091553,
+      "path_length": 15.81846590184406,
+      "collisions": 9,
+      "success_rate": 0.0,
+      "nodes_explored": 1793,
+      "smoothness": 0.20194530512108783
+    },
+    {
+      "planner": "PRM + ORCA",
+      "num_robots": 8,
+      "planning_time": 5.994576454162598,
+      "execution_time": 5.662257671356201,
+      "path_length": 16.73834283960569,
+      "collisions": 10,
+      "success_rate": 0.0,
+      "nodes_explored": 645,
+      "smoothness": 0.4339741484933819
+    },
+    {
+      "planner": "RRT* + ORCA",
+      "num_robots": 8,
+      "planning_time": 1.6428194046020508,
+      "execution_time": 5.621546745300293,
+      "path_length": 23.537131016673737,
+      "collisions": 14,
+      "success_rate": 0.0,
+      "nodes_explored": 2198,
+      "smoothness": 0.3106926765702056
+    }
+  ]
+}
